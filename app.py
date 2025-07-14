@@ -3,9 +3,10 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 from textblob import TextBlob
 import os
+import re
 
 # Configuración
 SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
@@ -37,6 +38,37 @@ def fetch_google_news(query):
         st.error(f"Error en SerpAPI: {response.status_code}")
         return None
 
+def parse_date(date_str):
+    if not date_str:
+        return datetime.now()
+
+    try:
+        # Intentar formato absoluto primero (ej: 'Jul 11, 2025')
+        return pd.to_datetime(date_str)
+    except:
+        pass
+
+    # Si dice "2 days ago" o "5 hours ago", restar desde ahora
+    match = re.search(r"(\d+)\s+(minute|hour|day|week|month|year)s?\s+ago", date_str)
+    if match:
+        num = int(match.group(1))
+        unit = match.group(2)
+        if unit == "minute":
+            return datetime.now() - timedelta(minutes=num)
+        elif unit == "hour":
+            return datetime.now() - timedelta(hours=num)
+        elif unit == "day":
+            return datetime.now() - timedelta(days=num)
+        elif unit == "week":
+            return datetime.now() - timedelta(weeks=num)
+        elif unit == "month":
+            return datetime.now() - timedelta(days=30*num)
+        elif unit == "year":
+            return datetime.now() - timedelta(days=365*num)
+
+    # Fallback
+    return datetime.now()
+
 def analyze_sentiment(text):
     blob = TextBlob(text)
     return blob.sentiment.polarity
@@ -50,10 +82,7 @@ def process_results(results, source):
         title = item.get("title", "")
         link = item.get("link", "")
         date_str = item.get("date", "")
-        try:
-            date = pd.to_datetime(date_str)
-        except:
-            date = datetime.now()
+        date = parse_date(date_str)
         articles.append({
             "title": title,
             "link": link,
@@ -110,7 +139,7 @@ if query and SERPAPI_API_KEY:
 
             st.plotly_chart(fig, use_container_width=True)
 
-            # Mostrar titulares con fecha
+            # Mostrar titulares con fecha corregida
             st.subheader("📰 Titulares analizados")
             for _, row in df.iterrows():
                 date_str = row["datetime"].strftime("%Y-%m-%d %H:%M")
