@@ -110,10 +110,11 @@ if query and SERPAPI_API_KEY:
 
             st.plotly_chart(fig, use_container_width=True)
 
-            # Mostrar todos los titulares
+            # Mostrar titulares con fecha
             st.subheader("📰 Titulares analizados")
             for _, row in df.iterrows():
-                st.markdown(f"- **[{row['title']}]({row['link']})** ({row['source']}) — Sentimiento: `{round(row['sentiment'], 2)}`")
+                date_str = row["datetime"].strftime("%Y-%m-%d %H:%M")
+                st.markdown(f"- `{date_str}` • **[{row['title']}]({row['link']})** ({row['source']}) — Sentimiento: `{round(row['sentiment'], 2)}`")
 
 else:
     st.info("Introduce un término de búsqueda y asegúrate de tener configurada la clave SerpAPI.")
