@@ -16,26 +16,27 @@ DELTA_THRESHOLD = 0.5  # Umbral para detectar picos de sentimiento
 st.set_page_config(page_title="Sentiment Spike Detector", layout="wide")
 
 st.title("📈 Real-Time Sentiment Spike Detector")
-st.markdown("Monitorea sentimiento en tiempo real desde Google News y Reddit para acciones y criptomonedas.")
+st.markdown("Monitorea sentimiento en tiempo real desde Google News (incluyendo resultados de Reddit) para acciones y criptomonedas.")
 
 # Entrada del usuario
 query = st.text_input("🔍 Buscar activo (Ej: AAPL, BTC, TSLA, ETH)", value="Bitcoin")
 search_type = st.radio("Tipo de activo", options=["Criptomoneda", "Acción"], horizontal=True)
 search_term = f"{query} {'crypto' if search_type == 'Criptomoneda' else 'stock'}"
 
-def fetch_serpapi_results(query, engine):
+def fetch_google_news(query):
     url = "https://serpapi.com/search"
     params = {
         "api_key": SERPAPI_API_KEY,
-        "engine": engine,
+        "engine": "google",
         "q": query,
+        "tbm": "nws",
         "num": "20"
     }
     response = requests.get(url, params=params)
     if response.status_code == 200:
         return response.json()
     else:
-        st.error(f"Error en SerpAPI ({engine}): {response.status_code}")
+        st.error(f"Error en SerpAPI: {response.status_code}")
         return None
 
 def analyze_sentiment(text):
@@ -47,36 +48,28 @@ def process_results(results, source):
         return []
 
     articles = []
-    if source == "google":
-        news_results = results.get("news_results", [])
-        for item in news_results:
-            articles.append({
-                "title": item.get("title"),
-                "link": item.get("link"),
-                "date": item.get("date", str(datetime.now())),
-                "source": "Google News"
-            })
-    elif source == "reddit":
-        reddit_results = results.get("organic_results", [])
-        for item in reddit_results:
-            title = item.get("title", "")
-            articles.append({
-                "title": title,
-                "link": item.get("link", ""),
-                "date": str(datetime.now()),
-                "source": "Reddit"
-            })
+    news_results = results.get("news_results", [])
+    for item in news_results:
+        title = item.get("title", "")
+        link = item.get("link", "")
+        date = item.get("date", str(datetime.now()))
+        articles.append({
+            "title": title,
+            "link": link,
+            "date": date,
+            "source": source
+        })
     return articles
 
 if query and SERPAPI_API_KEY:
     with st.spinner("Consultando SerpAPI..."):
-        google_data = fetch_serpapi_results(search_term, "google")
-        reddit_data = fetch_serpapi_results(search_term, "reddit")
+        google_main = fetch_google_news(search_term)
+        google_reddit = fetch_google_news(f"{search_term} site:reddit.com")
 
-        google_articles = process_results(google_data, "google")
-        reddit_articles = process_results(reddit_data, "reddit")
+        main_articles = process_results(google_main, "Google News")
+        reddit_articles = process_results(google_reddit, "Reddit vía Google News")
 
-        all_articles = google_articles + reddit_articles
+        all_articles = main_articles + reddit_articles
         if not all_articles:
             st.warning("No se encontraron artículos.")
         else:
