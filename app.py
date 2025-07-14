@@ -9,9 +9,7 @@ import os
 
 # Configuración
 SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
-
-# Parámetros
-DELTA_THRESHOLD = 0.5  # Umbral para detectar picos de sentimiento
+DELTA_THRESHOLD = 0.5  # Umbral de spike
 
 st.set_page_config(page_title="Sentiment Spike Detector", layout="wide")
 
@@ -46,13 +44,16 @@ def analyze_sentiment(text):
 def process_results(results, source):
     if not results:
         return []
-
     articles = []
     news_results = results.get("news_results", [])
     for item in news_results:
         title = item.get("title", "")
         link = item.get("link", "")
-        date = item.get("date", str(datetime.now()))
+        date_str = item.get("date", "")
+        try:
+            date = pd.to_datetime(date_str)
+        except:
+            date = datetime.now()
         articles.append({
             "title": title,
             "link": link,
@@ -73,7 +74,7 @@ if query and SERPAPI_API_KEY:
         if not all_articles:
             st.warning("No se encontraron artículos.")
         else:
-            # Analizar sentimiento
+            # Análisis de sentimiento
             df = pd.DataFrame(all_articles)
             df["sentiment"] = df["title"].apply(analyze_sentiment)
             df["datetime"] = pd.to_datetime(df["date"], errors="coerce")
@@ -83,7 +84,7 @@ if query and SERPAPI_API_KEY:
             df["delta"] = df["sentiment"].diff().fillna(0)
             df["spike"] = df["delta"].abs() > DELTA_THRESHOLD
 
-            # Mostrar gráfico
+            # Gráfico
             fig = go.Figure()
 
             fig.add_trace(go.Scatter(
@@ -109,11 +110,10 @@ if query and SERPAPI_API_KEY:
 
             st.plotly_chart(fig, use_container_width=True)
 
-            # Mostrar titulares que generaron picos
-            spike_df = df[df["spike"]]
-            if not spike_df.empty:
-                st.subheader("⚠️ Titulares que generaron picos de sentimiento")
-                for _, row in spike_df.iterrows():
-                    st.markdown(f"**[{row['title']}]({row['link']})** ({row['source']}) - Sentimiento: {round(row['sentiment'],2)}")
+            # Mostrar todos los titulares
+            st.subheader("📰 Titulares analizados")
+            for _, row in df.iterrows():
+                st.markdown(f"- **[{row['title']}]({row['link']})** ({row['source']}) — Sentimiento: `{round(row['sentiment'], 2)}`")
+
 else:
     st.info("Introduce un término de búsqueda y asegúrate de tener configurada la clave SerpAPI.")
