@@ -1,136 +1,126 @@
+
 import streamlit as st
-import pandas as pd
 import requests
-import plotly.graph_objs as go
-import os
-import datetime
+import pandas as pd
+import plotly.graph_objects as go
+from datetime import datetime
 from textblob import TextBlob
+import os
 
-# --- Configuración ---
+# Configuración
 SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
-QUERY = st.sidebar.text_input("🔍 Buscar acción o criptomoneda", value="Bitcoin")
-NUM_RESULTS = 50
-SENTIMENT_SPIKE_THRESHOLD = 0.3  # Umbral para alertas
 
-st.title("📈 Detector de Picos de Sentimiento en Tiempo Real")
-st.caption("Datos desde Google News y Reddit usando SerpAPI")
+# Parámetros
+DELTA_THRESHOLD = 0.5  # Umbral para detectar picos de sentimiento
 
-@st.cache_data(show_spinner=False)
+st.set_page_config(page_title="Sentiment Spike Detector", layout="wide")
+
+st.title("📈 Real-Time Sentiment Spike Detector")
+st.markdown("Monitorea sentimiento en tiempo real desde Google News y Reddit para acciones y criptomonedas.")
+
+# Entrada del usuario
+query = st.text_input("🔍 Buscar activo (Ej: AAPL, BTC, TSLA, ETH)", value="Bitcoin")
+search_type = st.radio("Tipo de activo", options=["Criptomoneda", "Acción"], horizontal=True)
+search_term = f"{query} {'crypto' if search_type == 'Criptomoneda' else 'stock'}"
+
+def fetch_serpapi_results(query, engine):
+    url = "https://serpapi.com/search"
+    params = {
+        "api_key": SERPAPI_API_KEY,
+        "engine": engine,
+        "q": query,
+        "num": "20"
+    }
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        st.error(f"Error en SerpAPI ({engine}): {response.status_code}")
+        return None
+
 def analyze_sentiment(text):
-    return TextBlob(text).sentiment.polarity
+    blob = TextBlob(text)
+    return blob.sentiment.polarity
 
-@st.cache_data(show_spinner=False)
-def fetch_news(query):
-    url = "https://serpapi.com/search.json"
-    params = {
-        "engine": "google_news",
-        "q": query,
-        "api_key": SERPAPI_API_KEY,
-        "num": NUM_RESULTS,
-        "hl": "en"
-    }
-    res = requests.get(url, params=params)
-    return res.json().get("news_results", [])
+def process_results(results, source):
+    if not results:
+        return []
 
-@st.cache_data(show_spinner=False)
-def fetch_reddit(query):
-    url = "https://serpapi.com/search.json"
-    params = {
-        "engine": "reddit",
-        "q": query,
-        "api_key": SERPAPI_API_KEY,
-        "num": NUM_RESULTS
-    }
-    res = requests.get(url, params=params)
-    return res.json().get("organic_results", [])
+    articles = []
+    if source == "google":
+        news_results = results.get("news_results", [])
+        for item in news_results:
+            articles.append({
+                "title": item.get("title"),
+                "link": item.get("link"),
+                "date": item.get("date", str(datetime.now())),
+                "source": "Google News"
+            })
+    elif source == "reddit":
+        reddit_results = results.get("organic_results", [])
+        for item in reddit_results:
+            title = item.get("title", "")
+            articles.append({
+                "title": title,
+                "link": item.get("link", ""),
+                "date": str(datetime.now()),
+                "source": "Reddit"
+            })
+    return articles
 
-def build_dataframe():
-    news_data = fetch_news(QUERY)
-    reddit_data = fetch_reddit(QUERY)
+if query and SERPAPI_API_KEY:
+    with st.spinner("Consultando SerpAPI..."):
+        google_data = fetch_serpapi_results(search_term, "google")
+        reddit_data = fetch_serpapi_results(search_term, "reddit")
 
-    if not reddit_data:
-        st.info("⚠️ No se encontraron resultados recientes en Reddit para esta búsqueda.")
+        google_articles = process_results(google_data, "google")
+        reddit_articles = process_results(reddit_data, "reddit")
 
-    entries = []
-    for item in news_data:
-        entries.append({
-            "title": item.get("title"),
-            "source": "Google News",
-            "link": item.get("link"),
-            "published": item.get("date") or str(datetime.datetime.now()),
-            "sentiment": analyze_sentiment(item.get("title", ""))
-        })
-
-    for item in reddit_data:
-        entries.append({
-            "title": item.get("title"),
-            "source": "Reddit",
-            "link": item.get("link"),
-            "published": item.get("date") or str(datetime.datetime.now()),
-            "sentiment": analyze_sentiment(item.get("title", ""))
-        })
-
-    df = pd.DataFrame(entries)
-    df["published"] = pd.to_datetime(df["published"], errors="coerce")
-    df = df.dropna(subset=["published"])
-    df = df.sort_values("published")
-    return df
-
-df = build_dataframe()
-
-# Mostrar todos los puntos (uno por artículo)
-fig = go.Figure()
-fig.add_trace(go.Scatter(
-    x=df["published"],
-    y=df["sentiment"],
-    mode="markers",
-    marker=dict(color="blue", size=6),
-    name="Cada titular"
-))
-
-# Calcular promedio de sentimiento por bloques de 5 minutos
-df["interval"] = df["published"].dt.floor("5min")
-sentiment_over_time = df.groupby("interval")["sentiment"].mean().reset_index()
-sentiment_over_time["change"] = sentiment_over_time["sentiment"].diff()
-
-# Detectar picos
-spikes = sentiment_over_time[abs(sentiment_over_time["change"]) > SENTIMENT_SPIKE_THRESHOLD]
-
-# --- ALERTAS ---
-if not spikes.empty:
-    for _, row in spikes.iterrows():
-        if row["change"] > 0:
-            st.success(f"📈 Sentimiento subió bruscamente a las {row['interval'].strftime('%H:%M')}")
+        all_articles = google_articles + reddit_articles
+        if not all_articles:
+            st.warning("No se encontraron artículos.")
         else:
-            st.error(f"📉 Sentimiento bajó bruscamente a las {row['interval'].strftime('%H:%M')}")
+            # Analizar sentimiento
+            df = pd.DataFrame(all_articles)
+            df["sentiment"] = df["title"].apply(analyze_sentiment)
+            df["datetime"] = pd.to_datetime(df["date"], errors="coerce")
+            df = df.sort_values("datetime")
 
-# Línea de evolución del sentimiento (promedio)
-fig.add_trace(go.Scatter(
-    x=sentiment_over_time["interval"],
-    y=sentiment_over_time["sentiment"],
-    mode="lines+markers",
-    name="Promedio 5min",
-    line=dict(color="orange")
-))
+            # Detección de picos
+            df["delta"] = df["sentiment"].diff().fillna(0)
+            df["spike"] = df["delta"].abs() > DELTA_THRESHOLD
 
-# Anotar titulares en picos
-for _, row in spikes.iterrows():
-    spike_time = row["interval"]
-    related_titles = df[df["interval"] == spike_time].sort_values("sentiment", ascending=False).head(2)
-    for _, article in related_titles.iterrows():
-        fig.add_trace(go.Scatter(
-            x=[spike_time],
-            y=[row["sentiment"]],
-            mode="markers+text",
-            text=[article["title"]],
-            textposition="top center",
-            marker=dict(size=10, color="red"),
-            showlegend=False
-        ))
+            # Mostrar gráfico
+            fig = go.Figure()
 
-fig.update_layout(title="Evolución del Sentimiento", xaxis_title="Hora", yaxis_title="Sentimiento")
-st.plotly_chart(fig, use_container_width=True)
+            fig.add_trace(go.Scatter(
+                x=df["datetime"],
+                y=df["sentiment"],
+                mode="lines+markers",
+                marker=dict(
+                    size=8,
+                    color=["red" if s else "blue" for s in df["spike"]],
+                    symbol=["star" if s else "circle" for s in df["spike"]]
+                ),
+                text=df["title"],
+                hoverinfo="text+y",
+                name="Sentiment"
+            ))
 
-# --- Mostrar tabla de titulares ---
-st.subheader("📰 Titulares recientes")
-st.dataframe(df[["published", "source", "title", "sentiment"]].sort_values("published", ascending=False), use_container_width=True)
+            fig.update_layout(
+                title=f"Evolución del sentimiento: {query}",
+                xaxis_title="Fecha",
+                yaxis_title="Sentimiento",
+                showlegend=False
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Mostrar titulares que generaron picos
+            spike_df = df[df["spike"]]
+            if not spike_df.empty:
+                st.subheader("⚠️ Titulares que generaron picos de sentimiento")
+                for _, row in spike_df.iterrows():
+                    st.markdown(f"**[{row['title']}]({row['link']})** ({row['source']}) - Sentimiento: {round(row['sentiment'],2)}")
+else:
+    st.info("Introduce un término de búsqueda y asegúrate de tener configurada la clave SerpAPI.")
